@@ -1,0 +1,95 @@
+{
+  "default_expire_error": "Query 20260820_013900_00542_vqj4a failed: Retention specified (0.00s) is shorter than the minimum retention configured in the system (7.00d). Minimum retention can be changed with iceberg.expire-snapshots.min-retention configuration property or iceberg.expire_snapshots_min_retention session property",
+  "default_expire_refused": true,
+  "experiment": "snapshot_reclaim",
+  "question": "what expire_snapshots actually gives back, and what it leaves behind",
+  "reclaim": {
+    "after_expire_disk_data_bytes": 576609982,
+    "peak_disk_data_bytes": 576609982,
+    "reclaimed_by_expire": 0,
+    "reclaimed_by_orphans": 383722053,
+    "snapshots_after": 1,
+    "snapshots_before": 5,
+    "still_stranded": 0,
+    "stranded_at_peak": 383722053
+  },
+  "stages": [
+    {
+      "delete_files": 0,
+      "disk_bytes": 185992836,
+      "disk_data_bytes": 185851292,
+      "disk_objects": 10,
+      "referenced_bytes": 185851292,
+      "referenced_data_files": 6,
+      "snapshots": 1,
+      "stage": "01_created",
+      "unreferenced_bytes": 0
+    },
+    {
+      "delete_files": 0,
+      "disk_bytes": 279104947,
+      "disk_data_bytes": 278820576,
+      "disk_objects": 17,
+      "referenced_bytes": 278820576,
+      "referenced_data_files": 9,
+      "snapshots": 2,
+      "stage": "02_appended",
+      "unreferenced_bytes": 0
+    },
+    {
+      "delete_files": 9,
+      "disk_bytes": 379815922,
+      "disk_data_bytes": 379504547,
+      "disk_objects": 31,
+      "referenced_bytes": 375286803,
+      "referenced_data_files": 10,
+      "snapshots": 3,
+      "stage": "03_updated",
+      "unreferenced_bytes": 4217744
+    },
+    {
+      "delete_files": 18,
+      "disk_bytes": 384054086,
+      "disk_data_bytes": 383722053,
+      "disk_objects": 43,
+      "referenced_bytes": 375286803,
+      "referenced_data_files": 10,
+      "snapshots": 4,
+      "stage": "04_deleted",
+      "unreferenced_bytes": 8435250
+    },
+    {
+      "delete_files": 0,
+      "disk_bytes": 577129173,
+      "disk_data_bytes": 576609982,
+      "disk_objects": 53,
+      "referenced_bytes": 192887929,
+      "referenced_data_files": 1,
+      "snapshots": 5,
+      "stage": "05_optimized",
+      "unreferenced_bytes": 383722053
+    },
+    {
+      "delete_files": 0,
+      "disk_bytes": 576824855,
+      "disk_data_bytes": 576609982,
+      "disk_objects": 43,
+      "referenced_bytes": 192887929,
+      "referenced_data_files": 1,
+      "snapshots": 1,
+      "stage": "06_expired_snapshots",
+      "unreferenced_bytes": 383722053
+    },
+    {
+      "delete_files": 0,
+      "disk_bytes": 193102802,
+      "disk_data_bytes": 192887929,
+      "disk_objects": 15,
+      "referenced_bytes": 192887929,
+      "referenced_data_files": 1,
+      "snapshots": 1,
+      "stage": "07_removed_orphans",
+      "unreferenced_bytes": 0
+    }
+  ]
+}

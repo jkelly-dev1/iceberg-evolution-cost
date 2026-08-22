@@ -1,0 +1,363 @@
+{
+  "experiment": "delete_cost",
+  "question": "who decides the write mode, and what does the deferred work cost the reader",
+  "read_amplification": {
+    "queries": {
+      "full_scan": "SELECT count(*), sum(amount_cents) FROM <table>",
+      "selective": "SELECT count(*) FROM <table> WHERE region = 'eu-west'"
+    },
+    "stages": [
+      {
+        "data_files": 7,
+        "delete_files": 0,
+        "deletes_applied": 0,
+        "live_rows": 20000000,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 677.4,
+            "duration_ms_min": 664.5,
+            "duration_ms_samples": [
+              664.5,
+              667.5,
+              672.8,
+              677.4,
+              682.4,
+              698.4,
+              699.8
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 20000000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 657.5,
+            "duration_ms_min": 636.8,
+            "duration_ms_samples": [
+              636.8,
+              647.4,
+              649.7,
+              657.5,
+              661.7,
+              677.9,
+              691.2
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 20000000,
+            "splits": 7
+          }
+        },
+        "stage": "00_baseline"
+      },
+      {
+        "data_files": 7,
+        "delete_bytes": 231507,
+        "delete_duration_ms": 962.2,
+        "delete_files": 7,
+        "delete_sql": "amount_cents BETWEEN 0 AND 999",
+        "deletes_applied": 1,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 857.6,
+            "duration_ms_min": 797.3,
+            "duration_ms_samples": [
+              797.3,
+              817.0,
+              833.0,
+              857.6,
+              862.5,
+              886.2,
+              932.7
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 19800000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 820.5,
+            "duration_ms_min": 798.9,
+            "duration_ms_samples": [
+              798.9,
+              801.0,
+              801.6,
+              820.5,
+              829.9,
+              837.7,
+              887.9
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 19800000,
+            "splits": 7
+          }
+        },
+        "rows_in_data_files": 20000000,
+        "stage": "01_after_delete_1"
+      },
+      {
+        "data_files": 7,
+        "delete_bytes": 463238,
+        "delete_duration_ms": 1340.9,
+        "delete_files": 14,
+        "delete_sql": "amount_cents BETWEEN 1000 AND 1999",
+        "deletes_applied": 2,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 965.6,
+            "duration_ms_min": 883.9,
+            "duration_ms_samples": [
+              883.9,
+              912.6,
+              924.8,
+              965.6,
+              971.1,
+              985.0,
+              1025.3
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 19600000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 831.2,
+            "duration_ms_min": 812.7,
+            "duration_ms_samples": [
+              812.7,
+              822.7,
+              827.2,
+              831.2,
+              841.8,
+              847.9,
+              851.9
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 19600000,
+            "splits": 7
+          }
+        },
+        "rows_in_data_files": 20000000,
+        "stage": "02_after_delete_2"
+      },
+      {
+        "data_files": 7,
+        "delete_bytes": 694747,
+        "delete_duration_ms": 1384.1,
+        "delete_files": 21,
+        "delete_sql": "amount_cents BETWEEN 2000 AND 2999",
+        "deletes_applied": 3,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 913.3,
+            "duration_ms_min": 828.0,
+            "duration_ms_samples": [
+              828.0,
+              859.7,
+              859.7,
+              913.3,
+              983.2,
+              998.4,
+              1024.8
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 19400000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 859.3,
+            "duration_ms_min": 818.5,
+            "duration_ms_samples": [
+              818.5,
+              825.3,
+              837.7,
+              859.3,
+              875.3,
+              876.1,
+              957.5
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 19400000,
+            "splits": 7
+          }
+        },
+        "rows_in_data_files": 20000000,
+        "stage": "03_after_delete_3"
+      },
+      {
+        "data_files": 7,
+        "delete_bytes": 926285,
+        "delete_duration_ms": 1398.3,
+        "delete_files": 28,
+        "delete_sql": "amount_cents BETWEEN 3000 AND 3999",
+        "deletes_applied": 4,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 852.7,
+            "duration_ms_min": 823.7,
+            "duration_ms_samples": [
+              823.7,
+              832.8,
+              847.1,
+              852.7,
+              860.9,
+              864.0,
+              878.5
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 19200000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 841.4,
+            "duration_ms_min": 818.0,
+            "duration_ms_samples": [
+              818.0,
+              827.7,
+              839.4,
+              841.4,
+              851.5,
+              854.1,
+              887.0
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 19200000,
+            "splits": 7
+          }
+        },
+        "rows_in_data_files": 20000000,
+        "stage": "04_after_delete_4"
+      },
+      {
+        "data_files": 7,
+        "delete_bytes": 1157927,
+        "delete_duration_ms": 1137.4,
+        "delete_files": 35,
+        "delete_sql": "amount_cents BETWEEN 4000 AND 4999",
+        "deletes_applied": 5,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 863.2,
+            "duration_ms_min": 848.1,
+            "duration_ms_samples": [
+              848.1,
+              850.8,
+              858.8,
+              863.2,
+              895.8,
+              905.2,
+              906.4
+            ],
+            "physical_input_bytes": 1420000,
+            "physical_input_reported": true,
+            "scan_rows": 19000000,
+            "splits": 7
+          },
+          "selective": {
+            "duration_ms_median": 855.4,
+            "duration_ms_min": 826.8,
+            "duration_ms_samples": [
+              826.8,
+              845.3,
+              851.3,
+              855.4,
+              870.8,
+              881.3,
+              889.3
+            ],
+            "physical_input_bytes": 479340,
+            "physical_input_reported": true,
+            "scan_rows": 19000000,
+            "splits": 7
+          }
+        },
+        "rows_in_data_files": 20000000,
+        "stage": "05_after_delete_5"
+      },
+      {
+        "data_files": 1,
+        "delete_files": 0,
+        "deletes_applied": 5,
+        "live_rows": 19000000,
+        "optimize_duration_ms": 8878.1,
+        "queries": {
+          "full_scan": {
+            "duration_ms_median": 690.0,
+            "duration_ms_min": 668.2,
+            "duration_ms_samples": [
+              668.2,
+              676.6,
+              677.4,
+              690.0,
+              698.4,
+              703.2,
+              724.1
+            ],
+            "physical_input_bytes": 1590000,
+            "physical_input_reported": true,
+            "scan_rows": 19000000,
+            "splits": 4
+          },
+          "selective": {
+            "duration_ms_median": 666.1,
+            "duration_ms_min": 612.5,
+            "duration_ms_samples": [
+              612.5,
+              659.6,
+              662.4,
+              666.1,
+              682.1,
+              684.6,
+              689.8
+            ],
+            "physical_input_bytes": 453660,
+            "physical_input_reported": true,
+            "scan_rows": 19000000,
+            "splits": 4
+          }
+        },
+        "stage": "06_after_optimize"
+      }
+    ]
+  },
+  "write_mode": {
+    "direct": {
+      "accepted": false,
+      "error": "Query 20260821_040705_00103_zubaz failed: Illegal keys in extra_properties: [write.merge.mode, write.delete.mode, write.update.mode]",
+      "method": "extra_properties on CREATE TABLE",
+      "properties_requested": {
+        "write.delete.mode": "copy-on-write",
+        "write.merge.mode": "copy-on-write",
+        "write.update.mode": "copy-on-write"
+      }
+    },
+    "out_of_band": {
+      "delete_files_added": 1,
+      "duration_ms": 822.4,
+      "files_added": 0,
+      "files_removed": 0,
+      "honored": false,
+      "http_status": 200,
+      "method": "set-properties via the Iceberg REST catalog",
+      "properties_are_set_on_the_table": true,
+      "properties_requested": {
+        "write.delete.mode": "copy-on-write",
+        "write.merge.mode": "copy-on-write",
+        "write.update.mode": "copy-on-write"
+      },
+      "properties_stored": {
+        "write.delete.mode": "copy-on-write",
+        "write.merge.mode": "copy-on-write",
+        "write.update.mode": "copy-on-write"
+      },
+      "rewrote_data": false,
+      "verdict": "merge-on-read"
+    }
+  }
+}

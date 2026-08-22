@@ -1,0 +1,133 @@
+{
+  "day_predicate": "DATE '2026-02-10'",
+  "evolved_partition_change": {
+    "alter_rewrote_data": false,
+    "files_after_alter_and_insert": 99,
+    "files_before_alter": 9
+  },
+  "experiment": "partition_planning",
+  "layouts": {
+    "day": {
+      "partition_specs": [
+        {
+          "bytes": 494922009,
+          "files": 90,
+          "spec_id": 0
+        }
+      ],
+      "queries": {
+        "non_partition_column": {
+          "physical_input_bytes": 722830,
+          "physical_input_reported": true,
+          "scan_rows": 3333334,
+          "splits": 15
+        },
+        "single_day": {
+          "physical_input_bytes": 0,
+          "physical_input_reported": false,
+          "scan_rows": 222222,
+          "splits": 1
+        },
+        "single_month": {
+          "physical_input_bytes": 0,
+          "physical_input_reported": false,
+          "scan_rows": 6222216,
+          "splits": 28
+        }
+      }
+    },
+    "evolved": {
+      "partition_specs": [
+        {
+          "bytes": 480697671,
+          "files": 9,
+          "spec_id": 0
+        },
+        {
+          "bytes": 52956230,
+          "files": 90,
+          "spec_id": 1
+        }
+      ],
+      "queries": {
+        "non_partition_column": {
+          "physical_input_bytes": 9140000,
+          "physical_input_reported": true,
+          "scan_rows": 20333334,
+          "splits": 24
+        },
+        "single_day": {
+          "physical_input_bytes": 853110,
+          "physical_input_reported": true,
+          "scan_rows": 6244438,
+          "splits": 4
+        },
+        "single_month": {
+          "physical_input_bytes": 0,
+          "physical_input_reported": false,
+          "scan_rows": 6844432,
+          "splits": 31
+        }
+      }
+    },
+    "month": {
+      "partition_specs": [
+        {
+          "bytes": 480918603,
+          "files": 9,
+          "spec_id": 0
+        }
+      ],
+      "queries": {
+        "non_partition_column": {
+          "physical_input_bytes": 743310,
+          "physical_input_reported": true,
+          "scan_rows": 20000000,
+          "splits": 9
+        },
+        "single_day": {
+          "physical_input_bytes": 279290,
+          "physical_input_reported": true,
+          "scan_rows": 6222216,
+          "splits": 3
+        },
+        "single_month": {
+          "physical_input_bytes": 0,
+          "physical_input_reported": false,
+          "scan_rows": 6222216,
+          "splits": 3
+        }
+      }
+    },
+    "none": {
+      "partition_specs": [
+        {
+          "bytes": 467067836,
+          "files": 12,
+          "spec_id": 0
+        }
+      ],
+      "queries": {
+        "non_partition_column": {
+          "physical_input_bytes": 1950000,
+          "physical_input_reported": true,
+          "scan_rows": 20000000,
+          "splits": 12
+        },
+        "single_day": {
+          "physical_input_bytes": 2190000,
+          "physical_input_reported": true,
+          "scan_rows": 20000000,
+          "splits": 12
+        },
+        "single_month": {
+          "physical_input_bytes": 2190000,
+          "physical_input_reported": true,
+          "scan_rows": 20000000,
+          "splits": 12
+        }
+      }
+    }
+  },
+  "question": "what partition evolution does to pruning, and what it costs to hold files under two specs at once"
+}
