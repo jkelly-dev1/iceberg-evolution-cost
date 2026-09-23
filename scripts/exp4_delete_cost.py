@@ -11,8 +11,8 @@ property in the Iceberg spec (write.delete.mode). If the property decides, then
 setting it should change the verdict. Part A sets it two ways and measures
 whether it does.
 
-What the deferred work costs. Merge-on-read is not free, it is BORROWED: every
-later reader applies the delete files the writer did not. Experiment 1 never
+What the deferred work costs. Merge-on-read defers work to every later
+reader, which applies the delete files the writer did not. Experiment 1 never
 ran a query afterward, so the interest payment went unmeasured. Part B deletes
 five times over and measures the same query after every round, then compacts
 and measures again.

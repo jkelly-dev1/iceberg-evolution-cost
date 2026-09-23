@@ -1,7 +1,7 @@
 {
   "day_predicate": "DATE '2026-02-10'",
   "evolved_partition_change": {
-    "alter_rewrote_data": false,
+    "alter_isolated": false,
     "files_after_alter_and_insert": 99,
     "files_before_alter": 9
   },

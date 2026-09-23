@@ -262,6 +262,7 @@
   "source_table": {
     "bytes": 457918427,
     "files": 7,
+    "measured_from": null,
     "rows": 20000000
   }
 }

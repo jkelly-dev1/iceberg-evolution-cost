@@ -7,13 +7,20 @@ were captured on 2026-08-20; experiment 4 was added later and captured on
 It is a separate capture and is labeled as one. It is not presented as part of a
 single sitting.
 
-This file is verbatim stdout. Nothing has been reordered, shortened or edited.
-The only thing removed is the leading `### expN` marker this capture added to
-separate the scripts.
+Every fenced block below is verbatim stdout. Nothing inside one has been
+reordered, shortened or edited; the only thing removed is the leading
+`### expN` marker this capture added to separate the scripts. The unfenced
+paragraphs are this document's own commentary and were never printed by
+anything.
 
 Those `results/*.json` files committed alongside this repository are the output
 of exactly this run, and `scripts/check_readme_numbers.py` re-derives every
-number in the README from them.
+number in `README.md` and `GITHUB_DESCRIPTION.txt` from them.
+
+The test-suite block at the end is re-captured whenever the suite changes, and
+it is the one block here that is not from the 2026-08 run: the experiments need
+the stack, the suite does not. Its figures are pasted from the commands as they
+ran.
 
 ## Setup
 
@@ -48,6 +55,16 @@ $ PYTHONPATH=scripts ./envs/bin/python scripts/exp1_operation_cost.py
     rewrote_data=True  data +1/-11  deletefiles +0  359436308 B added  9086.5 ms
 wrote results/exp1_operation_cost.json
 ```
+
+`rewrote_data` in that stdout is not the README's verdict column, and the
+`UPDATE` line is where the two look like they disagree. This flag asks whether
+the data file set changed identity, so adding a file sets it True; the
+README's table asks whether a data file was removed and replaced, which is
+what "did this rewrite my data" means, and answers `merge-on-read`. Both are
+true of the same operation. `scripts/lab.py` states both definitions where
+they are computed, and
+`tests/test_measurement_logic.py::TestVerdict::test_rewrote_data_and_the_verdict_mean_different_things`
+fails if either one drifts onto the other.
 
 ## Experiment 2: what partition evolution costs afterward
 
@@ -112,8 +129,8 @@ wrote results/exp4_delete_cost.json
 
 ```
 $ ./envs/bin/pytest -q
-53 passed in 0.02s
+70 passed in 0.03s
 $ python3 scripts/check_readme_numbers.py
 
-33 of 33 derived figures found verbatim in README.md (27 table rows, 6 in prose)
+58 of 58 derived figures found verbatim across 2 document(s) (38 table rows, 18 in README prose, 2 in GITHUB_DESCRIPTION.txt)
 ```

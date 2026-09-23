@@ -19,9 +19,10 @@ Four measurements, four questions:
 
 What the four measurements found. `DELETE` does not rewrite data, a table
 partitioned by day through evolution reads 28x more rows than one partitioned by
-day from the start, `expire_snapshots` reclaimed exactly zero bytes, and a table
-marked `copy-on-write` is written merge-on-read anyway because the engine
-decides, not the table.
+day from the start, `expire_snapshots` reclaimed exactly zero data bytes, and a
+table marked `copy-on-write` is written merge-on-read anyway because the engine
+decides, not the table. The "zero" is about data: expiry did free metadata, and
+section 3 gives that figure.
 
 ## 1. Which changes are metadata-only
 
@@ -31,16 +32,21 @@ difference over data file paths, not a count: an operation that swaps seven
 files for seven different files leaves the count unchanged and is still a full
 rewrite.
 
-| Operation | Verdict | Data files | Delete files | Bytes written |
-| --- | --- | --- | --- | --- |
-| `ADD COLUMN` | metadata-only | +0 / -0 | +0 | 0 |
-| `RENAME COLUMN` | metadata-only | +0 / -0 | +0 | 0 |
-| `DROP COLUMN` | metadata-only | +0 / -0 | +0 | 0 |
-| `ALTER COLUMN ... SET DATA TYPE bigint` | metadata-only | +0 / -0 | +0 | 0 |
-| `SET PROPERTIES partitioning = ...` | metadata-only | +0 / -0 | +0 | 0 |
-| `DELETE FROM ... WHERE` | merge-on-read | +0 / -0 | +11 | 0 |
-| `UPDATE ... SET` | merge-on-read | +1 / -0 | +12 | 161 MB |
-| `ALTER TABLE ... EXECUTE optimize` | rewrite | +1 / -11 | +0 | 359 MB |
+| Operation | Verdict | Data files | Delete files | Data bytes written | Delete bytes written |
+| --- | --- | --- | --- | --- | --- |
+| `ADD COLUMN` | metadata-only | +0 / -0 | +0 | 0 | 0 |
+| `RENAME COLUMN` | metadata-only | +0 / -0 | +0 | 0 | 0 |
+| `DROP COLUMN` | metadata-only | +0 / -0 | +0 | 0 | 0 |
+| `ALTER COLUMN ... SET DATA TYPE bigint` | metadata-only | +0 / -0 | +0 | 0 | 0 |
+| `SET PROPERTIES partitioning = ...` | metadata-only | +0 / -0 | +0 | 0 | 0 |
+| `DELETE FROM ... WHERE` | merge-on-read | +0 / -0 | +11 | 0 | 7 MB |
+| `UPDATE ... SET` | merge-on-read | +1 / -0 | +12 | 161 MB | 7 MB |
+| `ALTER TABLE ... EXECUTE optimize` | rewrite | +1 / -11 | +0 | 359 MB | 0 |
+
+The two byte columns are separate because one number cannot carry both. A
+merge-on-read `DELETE` writes no data bytes and 7,007,290 bytes of delete
+files, and a single column would show it as `0`. Delete bytes are deferred
+work, not absent work; `optimize` is where they come due.
 
 Two of the eight predictions were wrong, and they are still in the code. Both
 `DELETE` and `UPDATE` were predicted to rewrite data. Under merge-on-read they
@@ -48,6 +54,12 @@ write delete files and leave every original data file exactly where it was.
 `scripts/exp1_operation_cost.py` keeps the refuted predictions rather than
 quietly correcting them, and a test asserts that those two are recorded as
 refuted, so a later tidy-up cannot erase the only surprise in the table.
+
+"Verdict" above is narrower than the `rewrote_data` flag `SAMPLE_RUN.md`
+prints. That flag asks whether the data file set changed identity, so an
+append sets it; the verdict reserves "rewrite" for a data file that was
+removed and replaced. The `UPDATE` row is `rewrote_data=True` in the stdout
+and `merge-on-read` here, and both are true of it.
 
 Reading `$files` naively produces the opposite conclusion. That table lists
 delete files alongside data files, so counting its rows reports a merge-on-read
@@ -82,6 +94,27 @@ That is the same fact that makes the `SET PROPERTIES` row in section 1 free.
 The cheapness of the `ALTER` and the cost of every query afterward are the
 same property seen from two ends.
 
+### One result here is an artifact of the generator, not of Iceberg
+
+A predicate on a column nobody partitioned by should get no help from
+partitioning, and under `month` it gets none: `WHERE region = 'eu-west'` scans
+all 20,000,000 rows, exactly as the unpartitioned table does. Under `day` it
+scans 3,333,334 rows from 15 of the 90 day partitions. So the day layout reads
+6x fewer, on a column that is not in the partition spec at all.
+
+That is this data set, not Iceberg. `sql/generate.sql` derives both columns
+from the same row number: `event_date` is `id % 90` and `region` is `id % 6`.
+Six divides ninety, so every row landing on a given day has the same
+`id % 6` and therefore the same region, so each day partition holds exactly
+one region and a region predicate prunes to the 15 days that carry it. A `month`
+partition spans about 30 days and so carries all six regions; there the same
+predicate prunes nothing.
+
+Read it as a warning about synthetic data rather than as a result. A generator
+whose columns are all functions of one sequence can make two columns
+correlate perfectly without anyone intending it, and the pruning that
+correlation buys looks exactly like a real finding.
+
 ## 3. What expire_snapshots reclaims
 
 A table is taken through append, update, delete and compaction, then cleaned
@@ -89,15 +122,15 @@ up. Three numbers are tracked, and they are not the same number: bytes the
 current snapshot references, data bytes actually in object storage, and total
 bytes including metadata.
 
-| Stage | Snapshots | Referenced | On disk | Stranded |
-| --- | --- | --- | --- | --- |
-| created | 1 | 185.9 MB | 185.9 MB | 0 |
-| appended | 2 | 278.8 MB | 278.8 MB | 0 |
-| updated | 3 | 375.3 MB | 379.5 MB | 4.2 MB |
-| deleted | 4 | 375.3 MB | 383.7 MB | 8.4 MB |
-| **optimized** | 5 | 192.9 MB | **576.6 MB** | **383.7 MB** |
-| after `expire_snapshots` | 1 | 192.9 MB | **576.6 MB** | **383.7 MB** |
-| after `remove_orphan_files` | 1 | 192.9 MB | 192.9 MB | 0 |
+| Stage | Snapshots | Referenced | On disk | Total incl. metadata | Stranded |
+| --- | --- | --- | --- | --- | --- |
+| created | 1 | 185.9 MB | 185.9 MB | 186.0 MB | 0 |
+| appended | 2 | 278.8 MB | 278.8 MB | 279.1 MB | 0 |
+| updated | 3 | 375.3 MB | 379.5 MB | 379.8 MB | 4.2 MB |
+| deleted | 4 | 375.3 MB | 383.7 MB | 384.1 MB | 8.4 MB |
+| **optimized** | 5 | 192.9 MB | **576.6 MB** | 577.1 MB | **383.7 MB** |
+| after `expire_snapshots` | 1 | 192.9 MB | **576.6 MB** | 576.8 MB | **383.7 MB** |
+| after `remove_orphan_files` | 1 | 192.9 MB | 192.9 MB | 193.1 MB | 0 |
 
 `expire_snapshots` took the snapshot count from 5 to 1 and reclaimed zero data
 bytes. Not a rounding-error amount: the data figure is identical to the byte,
@@ -108,9 +141,11 @@ It did free metadata, and saying "zero bytes" without that qualifier would be
 wrong in the direction that flatters the finding. Total on-disk went from
 577,129,173 to 576,824,855 and the object count from 53 to 43: 304,318 bytes
 across 10 objects, all of it manifests, manifest lists and `metadata.json`.
-That is 0.05% of what compaction stranded, so the data column is the one to
-read, but it is not nothing, and the third column above is there so a reader can
-see it rather than take it on trust.
+That is 0.08% of what compaction stranded, so the data column is the one to
+read, but it is not nothing, and the total column above shows it. The
+percentage is 304,318 of 383,722,053 bytes, the amount compaction stranded. It
+is not against the 576.6 MB peak, which is a different denominator and gives
+the flattering 0.05%.
 
 Compaction is what created the extra copies; expiry is what turned them from
 reachable history into garbage. Both are needed before `remove_orphan_files`
@@ -142,7 +177,7 @@ deferral costs whoever queries the table next.
 
 Copy-on-write versus merge-on-read is a table property in the Iceberg spec.
 Trino 478 exposes no `delete_mode` property of its own, and it rejects the spec
-one outright rather than ignoring it:
+one outright:
 
 ```
 Illegal keys in extra_properties: [write.merge.mode, write.delete.mode, write.update.mode]
@@ -203,16 +238,20 @@ needs Docker.
 | Schema changes touch no data file and no delete file | `tests/test_results_invariants.py::TestOperationCost::test_schema_changes_touch_no_file` |
 | Metadata-only changes preserve every row | `tests/test_results_invariants.py::TestOperationCost::test_metadata_changes_preserve_every_row` |
 | Changing the partition spec rewrites nothing | `tests/test_results_invariants.py::TestOperationCost::test_partition_change_is_metadata_only` |
+| A merge-on-read write is deferred work, not absent work: it writes delete-file bytes | `tests/test_results_invariants.py::TestOperationCost::test_a_merge_on_read_write_still_writes_bytes` (mutation-checked: zero the delete-file bytes and it fails) |
+| The source-table figures agree with every fresh copy of that table in the same run | `tests/test_results_invariants.py::TestSourceTable::test_the_source_row_count_agrees_with_every_copy_of_it`, `::TestSourceTable::test_the_source_byte_total_is_in_range_of_its_own_copies` |
 | `DELETE` does not rewrite data; it adds delete files | `tests/test_results_invariants.py::TestOperationCost::test_delete_does_not_rewrite_data` |
 | `optimize` is the only operation that truly rewrites | `tests/test_results_invariants.py::TestOperationCost::test_optimize_is_the_only_true_rewrite` |
 | The two refuted predictions stay recorded as refuted | `tests/test_results_invariants.py::TestOperationCost::test_two_predictions_were_refuted_and_are_recorded_as_such` (mutation-checked: "correct" them in the results and it fails) |
 | Day partitioning prunes a single-day query to one split | `tests/test_results_invariants.py::TestPartitionPlanning::test_day_partitioning_prunes_a_single_day_query_to_one_split` |
 | An evolved table holds files under two partition specs | `tests/test_results_invariants.py::TestPartitionPlanning::test_evolution_leaves_old_files_under_the_old_spec` |
+| The `ALTER` that changed the spec left every original file under the ORIGINAL spec id, and a run that did not isolate the `ALTER` may not claim it did | `tests/test_results_invariants.py::TestPartitionPlanning::test_the_alter_itself_moved_no_data` |
+| The experiment takes a state BETWEEN the `ALTER` and the `INSERT`, so the `ALTER` can be measured on its own | `tests/test_measurement_logic.py::TestTheEvolvedBuildIsolatesTheAlter::test_a_state_is_taken_between_the_alter_and_the_insert`, `::TestTheEvolvedBuildIsolatesTheAlter::test_it_hands_back_the_state_that_isolates_the_alter` (mutation-checked: drop the middle state, or return the wrong one, and they fail) |
 | An evolved day table scans far more than a native one | `tests/test_results_invariants.py::TestPartitionPlanning::test_evolved_table_scans_far_more_than_a_native_day_table` |
-| MONTH partitioning does not help a non-partition predicate. The day layout DOES, by 6x, and that is an artifact of this generator rather than an Iceberg property -- see below | `tests/test_results_invariants.py::TestPartitionPlanning::test_partitioning_does_not_help_a_non_partition_predicate` |
+| MONTH partitioning does not help a non-partition predicate, and the DAY layout helps only because this generator correlates the two columns (section 2, "One result here is an artifact of the generator") | `tests/test_results_invariants.py::TestPartitionPlanning::test_month_partitioning_does_not_help_a_non_partition_predicate`, `::TestPartitionPlanning::test_the_day_layout_helps_only_because_the_generator_correlates_them` |
 | The EXPLAIN parser reads bytes, rows and splits from a real plan, takes the largest node rather than the first, and reports a pruned scan as pruned rather than as a failed parse | `tests/test_measurement_logic.py::TestPlanParsing::test_reads_bytes_rows_and_splits`, `::TestPlanParsing::test_a_fully_pruned_scan_reports_no_physical_input_line`, `::TestPlanParsing::test_the_largest_node_is_taken_not_the_first_or_the_sum` (mutation-checked: break any of the parser's three regexes and it fails) |
 | `expire_snapshots` is refused at the default retention | `tests/test_results_invariants.py::TestSnapshotReclaim::test_expire_snapshots_is_refused_by_default` |
-| `expire_snapshots` reclaims exactly zero bytes | `tests/test_results_invariants.py::TestSnapshotReclaim::test_expiring_snapshots_reclaims_nothing` (mutation-checked: record any nonzero reclaim and it fails) |
+| `expire_snapshots` reclaims exactly zero DATA bytes, and frees metadata only | `tests/test_results_invariants.py::TestSnapshotReclaim::test_expiring_snapshots_reclaims_no_data_bytes`, `::TestSnapshotReclaim::test_expiring_snapshots_frees_metadata_and_says_so` (mutation-checked: record any nonzero data reclaim, or make the metadata total stand still, and they fail) |
 | `remove_orphan_files` is what frees the space | `tests/test_results_invariants.py::TestSnapshotReclaim::test_orphan_removal_is_what_actually_frees_the_space` |
 | Compaction is what strands the bytes | `tests/test_results_invariants.py::TestSnapshotReclaim::test_compaction_is_what_strands_the_bytes` |
 | Every stage's stranded figure agrees with its own inputs | `tests/test_results_invariants.py::TestSnapshotReclaim::test_every_stage_is_internally_consistent` (mutation-checked: perturb one figure and it fails) |
@@ -220,6 +259,7 @@ needs Docker.
 | A rewrite is detected by path set, not by file count | `tests/test_measurement_logic.py::TestDelta::test_same_count_different_paths_is_still_a_rewrite` (mutation-checked: compare counts and it fails) |
 | Delete files are never counted as rewritten data | `tests/test_measurement_logic.py::TestDelta::test_delete_files_do_not_count_as_rewritten_data` (mutation-checked: fold them in and it fails) |
 | A data-file removal outranks a merge-on-read verdict | `tests/test_measurement_logic.py::TestVerdict::test_rewrite_outranks_merge_on_read` (mutation-checked: reorder the checks and it fails) |
+| `rewrote_data` and the verdict answer different questions, and neither may drift onto the other | `tests/test_measurement_logic.py::TestVerdict::test_rewrote_data_and_the_verdict_mean_different_things` |
 | Trino's byte units are decimal, not binary | `tests/test_measurement_logic.py::TestByteParsing::test_units_are_decimal_not_binary` (mutation-checked: read them as 1024 and it fails) |
 | A fully pruned scan reports no physical input at all | `tests/test_measurement_logic.py::TestPlanParsing::test_a_fully_pruned_scan_reports_no_physical_input_line` |
 | Trino refuses the Iceberg write-mode property outright | `tests/test_results_invariants.py::TestDeleteCost::test_trino_refuses_the_write_mode_property` (mutation-checked: record the refusal as an acceptance and it fails) |
@@ -227,13 +267,14 @@ needs Docker.
 | A table marked `copy-on-write` is still written merge-on-read by Trino | `tests/test_results_invariants.py::TestDeleteCost::test_trino_ignores_a_copy_on_write_table` (mutation-checked: flip `honored` to true, or relabel the verdict a rewrite, and it fails) |
 | Each `DELETE` adds one delete file per data file | `tests/test_results_invariants.py::TestDeleteCost::test_each_delete_adds_one_delete_file_per_data_file` (mutation-checked: move any round off the per-data-file ratio and it fails) |
 | Five successive deletes rewrite no data file at all | `tests/test_results_invariants.py::TestDeleteCost::test_no_delete_ever_rewrites_a_data_file` (mutation-checked: drop one data file from any round and it fails) |
-| A million rows are logically gone while physically still in the files | `tests/test_results_invariants.py::TestDeleteCost::test_the_rows_are_logically_gone_and_physically_present` (mutation-checked: claim the rows left the files and it fails) |
+| A million rows are logically gone while physically still in the files, measured after the fifth delete and before `optimize` | `tests/test_results_invariants.py::TestDeleteCost::test_the_rows_are_logically_gone_and_physically_present`, `::TestDeleteCost::test_every_delete_moves_the_logical_count_and_not_the_physical` (mutation-checked: claim the rows left the files, or make a delete logically ineffective, and they fail) |
 | `Physical input` reports the same bytes at 0 and at 35 delete files | `tests/test_results_invariants.py::TestDeleteCost::test_physical_input_is_blind_to_delete_files` (mutation-checked: vary the reported scan by one byte and it fails) |
 | Delete-file bytes are over half the reported scan, and uncounted | `tests/test_results_invariants.py::TestDeleteCost::test_delete_file_bytes_are_a_large_invisible_share_of_the_read` |
 | Every timed run with delete files was SLOWER than every run without, on both queries | `tests/test_results_invariants.py::TestDeleteCost::test_every_run_with_delete_files_is_slower_than_every_run_without` (mutation-checked: overlap the ranges by a single sample and it fails) |
 | The read cost appears at the first delete and then plateaus | `tests/test_results_invariants.py::TestDeleteCost::test_the_cost_appears_at_the_first_delete_and_then_plateaus` |
 | `optimize` clears the delete files and returns the read to baseline | `tests/test_results_invariants.py::TestDeleteCost::test_optimize_returns_the_read_to_baseline` (mutation-checked: leave delete files behind and it fails) |
-| Every number in this README is derived from `results/*.json` | `tests/test_results_invariants.py::TestReadmeAgreesWithResults::test_every_readme_number_is_derived_from_the_results` (mutation-checked: change one figure in the README and it fails) |
+| Every test this table cites exists, and every section it points at exists | `tests/test_results_invariants.py::TestTheClaimsTableIsHonest::test_every_test_the_readme_cites_exists`, `::TestTheClaimsTableIsHonest::test_every_section_the_readme_points_at_exists`, `::TestTheClaimsTableIsHonest::test_the_citation_parser_still_finds_the_whole_table` (the last one fails if the parser stops finding the table, so a clean pass cannot come from an empty set) |
+| Every number in this README and in `GITHUB_DESCRIPTION.txt` is derived from `results/*.json`, prose as well as tables | `tests/test_results_invariants.py::TestReadmeAgreesWithResults::test_every_shipped_number_is_derived_from_the_results` (mutation-checked: change one figure in either document and it fails) |
 
 ## Running it
 
@@ -287,6 +328,22 @@ not secrets: MinIO needs a root user to start and the whole thing is bound to
   write parallelism by a few hundredths of a percent. The qualitative results
   reproduce exactly; the byte figures in the tables are from the recorded run
   in `results/`, and no test pins them.
+- **The recorded run did not read the source-table figures off the table.**
+  `results/exp1_operation_cost.json` carries `source_table.measured_from:
+  null` to say so; a run that reads them records the table's name there. So
+  the 458 MB above is the one figure in this document that no run of the
+  stack produced. The row count is corroborated by every fresh copy of the
+  source in the same results file, and the byte total is bounded against
+  those copies. The script reads all three from the table, so the next run
+  records a measurement.
+- **The recorded run did not isolate the ALTER in experiment 2.**
+  `evolved_partition_change.alter_isolated` is `false`: that run took two
+  states, before the CREATE and after the ALTER and the INSERT together, so
+  it could not have observed the ALTER rewriting files on its own. What it
+  does show is that the evolved table holds every original file under the
+  original spec id, which is the same fact from the other end, and it is
+  what the test asserts. The script takes a third state between the two
+  statements, so the next run measures the ALTER directly.
 
 ## Related repositories
 
@@ -304,4 +361,4 @@ and predictions recorded before the run so the refuted ones survive.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

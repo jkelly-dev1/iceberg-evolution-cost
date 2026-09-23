@@ -77,7 +77,7 @@ def run_one(name, template, expectation):
         record["disk_bytes_before"] = disk_before["bytes"]
         record["disk_bytes_after"] = lab.disk()["bytes"]
     except lab.QueryError as exc:
-        # An unsupported operation is a RESULT, not a crash. Trino's Iceberg
+        # An unsupported operation is recorded as a result. Trino's Iceberg
         # connector does not implement every Iceberg spec operation, and which
         # ones it declines is part of the answer.
         record["supported"] = False
@@ -104,10 +104,22 @@ def main():
         else:
             print(f"    UNSUPPORTED: {rec['error'][:90]}")
 
+    # Read off the source table, so the results file describes the table this
+    # run actually used. The README's "about 458 MB" comes from the byte
+    # figure, and a change to sql/generate.sql moves all three. One query.
+    src = lab.state(SOURCE)
     payload = {
         "experiment": "operation_cost",
         "question": "which table changes are metadata-only and which rewrite data",
-        "source_table": {"rows": 20000000, "files": 7, "bytes": 457918427},
+        "source_table": {
+            # Which table these were read off, and null in a run that did not
+            # read them. The key names the table, so it cannot be a constant
+            # claiming a measurement.
+            "measured_from": lab.table(SOURCE),
+            "rows": src["rows"],
+            "files": src["file_count"],
+            "bytes": src["bytes"],
+        },
         "operations": results,
     }
     lab.write_result("results/exp1_operation_cost.json", payload)

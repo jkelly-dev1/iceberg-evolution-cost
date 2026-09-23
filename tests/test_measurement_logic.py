@@ -102,6 +102,39 @@ class TestVerdict:
         assert lab.verdict({"files_removed": 0, "delete_files_added": 0,
                             "files_added": 2}) == "append"
 
+    def test_rewrote_data_and_the_verdict_mean_different_things(self):
+        """Two definitions of one word, pinned together so neither moves alone.
+
+        `delta()["rewrote_data"]` is True when the data file set changed
+        identity, so a bare append sets it. `verdict()` reserves "rewrite" for
+        a data file being removed and replaced. SAMPLE_RUN.md prints the first
+        for the UPDATE and the README's table prints the second, and each
+        document says which it means. This test fails if either definition
+        drifts onto the other.
+        """
+        before = state(data=[("a.parquet", 100, 10, lab.DATA)])
+
+        appended = lab.delta(before, state(
+            data=[("a.parquet", 100, 10, lab.DATA),
+                  ("b.parquet", 250, 20, lab.DATA)]))
+        assert appended["rewrote_data"] is True     # the file set changed
+        assert lab.verdict(appended) == "append"    # nothing was removed
+
+        # The shape the UPDATE actually took: a new data file, delete files,
+        # and not one original data file gone.
+        updated = lab.delta(before, state(
+            data=[("a.parquet", 100, 10, lab.DATA),
+                  ("b.parquet", 250, 20, lab.DATA)],
+            deletes=[("d.parquet", 9, 2, lab.POSITION_DELETES)]))
+        assert updated["rewrote_data"] is True
+        assert lab.verdict(updated) == "merge-on-read"
+
+        # Where the two agree: a real rewrite.
+        replaced = lab.delta(before,
+                             state(data=[("c.parquet", 100, 10, lab.DATA)]))
+        assert replaced["rewrote_data"] is True
+        assert lab.verdict(replaced) == "rewrite"
+
     def test_rewrite_outranks_merge_on_read(self):
         # UPDATE adds delete files AND replaces data files. If a data file was
         # removed the honest word is rewrite, whatever else also happened.
@@ -122,14 +155,11 @@ PLAN_FULLY_PRUNED = """
 
 
 class TestPlanParsing:
-    """THESE CALL lab.parse_explain.
+    """These call lab.parse_explain itself on captured plan text.
 
-    This class used to re-declare the parser's three regexes inline and run
-    them against the constants below. That checks that a regex can be written
-    twice; it says nothing about the shipped parser, which produces every
-    "Bytes read", "Rows scanned" and "Splits" figure in sections 2 and 4:
-    including the 28x headline. Breaking any of the three in lab.py left the
-    whole suite green while those figures silently became 0.
+    The shipped parser produces every "Bytes read", "Rows scanned" and
+    "Splits" figure in sections 2 and 4, including the 28x headline, so the
+    tests exercise it directly instead of a copy of its regexes.
     """
 
     def test_reads_bytes_rows_and_splits(self):
@@ -143,8 +173,8 @@ class TestPlanParsing:
         # Absent is not a parse failure. When a count is answered from
         # manifest and row-group metadata the plan carries no "Physical input"
         # line at all, and the scan itself prints "(0B)". Treating that as a
-        # broken parse would have hidden the most favorable result in
-        # experiment 2, so the flag records which case produced the zero.
+        # broken parse would hide the most favorable result in experiment 2,
+        # so the flag records which case produced the zero.
         got = lab.parse_explain(PLAN_FULLY_PRUNED)
         assert got["physical_input_bytes"] == 0
         assert got["physical_input_reported"] is False, (
@@ -170,3 +200,83 @@ class TestPlanParsing:
         got = lab.parse_explain("Query 20260820_013900 failed: no such table")
         assert got == {"physical_input_bytes": 0, "physical_input_reported": False,
                        "scan_rows": 0, "splits": 0}
+
+
+class TestTheEvolvedBuildIsolatesTheAlter:
+    """exp2's `build_evolved` needs Trino, so its sequencing is pinned here
+    with lab's functions patched.
+
+    The experiment's claim is that the `ALTER` which changed the partition
+    spec rewrote no data. Observing that requires a state taken between the
+    ALTER and the INSERT that follows it: an INSERT always adds files, so a
+    delta spanning both cannot tell which statement added them.
+
+    lab's functions are patched on the `lab` module object, which is the
+    binding `exp2_partition_planning` resolves: it does `import lab` and
+    calls `lab.sql`. Patching a local copy would leave the real functions in
+    place and this test would reach Docker.
+    """
+
+    def _trace(self, monkeypatch):
+        import exp2_partition_planning as exp2
+
+        calls = []
+
+        def fake_sql(statement, fmt="JSON"):
+            calls.append(("sql", " ".join(statement.split())))
+            return []
+
+        def fake_state(name):
+            calls.append(("state", name))
+            return {"file_count": len(calls), "delete_file_count": 0,
+                    "data_files": {}, "delete_files": {}, "files": {},
+                    "bytes": 0, "delete_bytes": 0, "rows": 0,
+                    "snapshot_count": 1, "snapshot_ids": [1]}
+
+        monkeypatch.setattr(lab, "sql", fake_sql)
+        monkeypatch.setattr(lab, "state", fake_state)
+        returned = exp2.build_evolved()
+        return calls, returned
+
+    def test_a_state_is_taken_between_the_alter_and_the_insert(self, monkeypatch):
+        calls, _ = self._trace(monkeypatch)
+        kinds = [k for k, _ in calls]
+        assert kinds.count("state") == 3, (
+            f"build_evolved took {kinds.count('state')} states; three are "
+            f"needed to isolate the ALTER from the INSERT")
+
+        at = [i for i, (k, _) in enumerate(calls) if k == "state"]
+        alter = next(i for i, (k, v) in enumerate(calls)
+                     if k == "sql" and "SET PROPERTIES" in v)
+        insert = next(i for i, (k, v) in enumerate(calls)
+                      if k == "sql" and v.startswith("INSERT INTO"))
+        assert at[0] < alter, "the first state must precede the ALTER"
+        assert alter < at[1] < insert, (
+            "the middle state must fall between the ALTER and the INSERT, or "
+            "the two are measured together and the ALTER is never isolated")
+        assert insert < at[2], "the last state must follow the INSERT"
+
+    def test_it_hands_back_the_state_that_isolates_the_alter(self, monkeypatch):
+        # Taking the state and then dropping it on the floor would satisfy the
+        # ordering test above while leaving main() nothing to measure with.
+        _, returned = self._trace(monkeypatch)
+        assert len(returned) == 4
+        _, before, after_alter, after = returned
+        assert before is not after_alter is not after
+        assert after_alter is not after
+
+    def test_the_alter_really_does_precede_the_insert(self, monkeypatch):
+        # The ordering the experiment's whole story rests on: the spec is
+        # changed first, and the rows inserted afterwards land under the new
+        # spec while the old files keep the old one.
+        calls, _ = self._trace(monkeypatch)
+        statements = [v for k, v in calls if k == "sql"]
+        alter = next(i for i, v in enumerate(statements)
+                     if "SET PROPERTIES" in v)
+        insert = next(i for i, v in enumerate(statements)
+                      if v.startswith("INSERT INTO"))
+        create = next(i for i, v in enumerate(statements)
+                      if v.startswith("CREATE TABLE"))
+        assert create < alter < insert
+        assert "month(event_date)" in statements[create]
+        assert "day(event_date)" in statements[alter]

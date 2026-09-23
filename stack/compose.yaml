@@ -2,7 +2,7 @@
 #
 # The credentials below are local-only and deliberate. MinIO needs a root user
 # to start, the REST catalog and Trino need the same pair to reach it, and the
-# whole stack is bound to loopback. They are not secrets, they are fixtures.
+# whole stack is bound to loopback. They are fixtures, not secrets.
 #
 # The project name is explicit, and it has to be. Compose derives the project
 # name from the CONTAINING DIRECTORY when you do not set one, and this file

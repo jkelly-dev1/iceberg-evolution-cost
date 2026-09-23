@@ -162,7 +162,15 @@ def delta(before, after):
         "snapshots_before": before["snapshot_count"],
         "snapshots_after": after["snapshot_count"],
         "new_snapshots": after["snapshot_count"] - before["snapshot_count"],
-        # The headline: did any DATA file change identity?
+        # Did any data file change identity? A bare append sets this true,
+        # and that is not the question `verdict()` answers. `verdict()`
+        # reserves "rewrite" for a data file that was removed and replaced,
+        # so an UPDATE is `rewrote_data=True` here and `merge-on-read` in the
+        # verdict, true under both definitions. SAMPLE_RUN.md shows this flag,
+        # the README's table shows the verdict, and each says which it means.
+        # test_measurement_logic.py::TestVerdict::
+        # test_rewrote_data_and_the_verdict_mean_different_things pins the
+        # relationship so neither definition can drift onto the other.
         "rewrote_data": len(added) > 0 or len(removed) > 0,
         "added_delete_files": len(del_added) > 0,
     }
@@ -217,14 +225,10 @@ def _bytes(text):
 def parse_explain(text):
     """Pull what the scan actually read out of an EXPLAIN ANALYZE plan.
 
-    Separated from the query so it can be tested. This parser produces every
-    "Bytes read", "Rows scanned" and "Splits" figure in sections 2 and 4,
-    including the 28x evolution headline, and running it required Trino, so
-    no test called it. The tests re-declared its three regexes inline and ran
-    them against hand-written plan text, which checks that the author can
-    write a regex twice, not that the shipped one works. Breaking any of the
-    three here left the whole suite green while every published figure in two
-    sections silently became 0.
+    Separated from the query so it can be tested without Trino. This parser
+    produces every "Bytes read", "Rows scanned" and "Splits" figure in
+    sections 2 and 4, including the 28x evolution headline, so the tests call
+    it directly on captured plan text.
 
     physical_input_bytes is bytes fetched from object storage AFTER partition
     pruning and Parquet row-group skipping. scan_rows is rows the table scan
@@ -292,7 +296,14 @@ def verdict(rec):
 
     metadata-only  no data file and no delete file changed identity
     merge-on-read  delete files appeared; no data file was removed
+    append         new data files only, nothing removed
     rewrite        at least one data file was removed and replaced
+
+    "Rewrite" here is narrower than `delta()["rewrote_data"]`. That flag
+    asks whether the data file set changed, so an append sets it;
+    this asks whether anything was thrown away and written again, which is the
+    question "did this operation rewrite my data" actually means. The UPDATE
+    in experiment 1 is True by the first and "merge-on-read" by the second.
     """
     if rec["files_removed"] > 0:
         return "rewrite"

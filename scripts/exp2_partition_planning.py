@@ -44,7 +44,13 @@ def build(name, partitioning):
 
 
 def build_evolved():
-    """month spec, then evolve to day, then add rows under the new spec."""
+    """month spec, then evolve to day, then add rows under the new spec.
+
+    Three states. The middle one, between the ALTER and the INSERT, is what
+    lets "the ALTER rewrote no data" be observed: a delta across both
+    statements cannot say which one added files, because an INSERT always
+    adds some.
+    """
     t = lab.table("exp2_evolved")
     lab.sql(f"DROP TABLE IF EXISTS {t}")
     lab.sql(f"CREATE TABLE {t} WITH (format='PARQUET', "
@@ -53,13 +59,14 @@ def build_evolved():
     before = lab.state("exp2_evolved")
     lab.sql(f"ALTER TABLE {t} SET PROPERTIES "
             f"partitioning = ARRAY['day(event_date)']")
+    after_alter = lab.state("exp2_evolved")
     # New rows, distinct ids, same date range: these land under the DAY spec
     # while every original file stays under MONTH.
     lab.sql(f"INSERT INTO {t} SELECT event_id + 100000000, event_date, region, "
             f"status, amount_cents, payload_hash, legacy_seq "
             f"FROM {lab.table(SOURCE)} WHERE event_id <= 2000000")
     after = lab.state("exp2_evolved")
-    return t, before, after
+    return t, before, after_alter, after
 
 
 def spec_mix(name):
@@ -81,7 +88,8 @@ def main():
                          "state": None}
 
     print("  building evolved ...", flush=True)
-    t_evo, evo_before, evo_after = build_evolved()
+    t_evo, evo_before, evo_after_alter, evo_after = build_evolved()
+    alter = lab.delta(evo_before, evo_after_alter)
     layouts["evolved"] = {"table": t_evo, "specs": spec_mix("exp2_evolved")}
 
     results = {}
@@ -102,9 +110,17 @@ def main():
                      "costs to hold files under two specs at once"),
         "day_predicate": DAY,
         "evolved_partition_change": {
+            # Whether a distinct middle state exists, asked of the states
+            # themselves. A run that hands the same state back twice reports
+            # false here, and the ALTER figures below are then not evidence.
+            "alter_isolated": evo_after_alter is not evo_after,
             "files_before_alter": evo_before["file_count"],
+            "files_after_alter": evo_after_alter["file_count"],
             "files_after_alter_and_insert": evo_after["file_count"],
-            "alter_rewrote_data": False,
+            "alter_rewrote_data": alter["rewrote_data"],
+            "alter_files_added": alter["files_added"],
+            "alter_files_removed": alter["files_removed"],
+            "alter_bytes_added": alter["bytes_added"],
         },
         "layouts": results,
     }
