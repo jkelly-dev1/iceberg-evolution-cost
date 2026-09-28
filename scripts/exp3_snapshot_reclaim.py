@@ -5,14 +5,18 @@ those leaves data files that no longer belong to the current snapshot but are
 still on disk, because older snapshots still reference them and time travel
 has to keep working.
 
-The question is what you get back, and when. Three numbers are tracked at
+The question is what you get back, and when. Four numbers are tracked at
 every stage and they are NOT the same number:
 
-  referenced_bytes  data files the CURRENT snapshot points at
-  disk_data_bytes   data files actually sitting in object storage
-  disk_bytes        everything, including metadata.json and manifests
+  referenced_bytes         data files the CURRENT snapshot points at
+  referenced_delete_bytes  delete files the CURRENT snapshot points at
+  disk_data_bytes          data and delete files sitting in object storage
+  disk_bytes               everything, including metadata.json and manifests
 
-The gap between the first two is history you are paying to store.
+What is on disk and referenced by neither is history you are paying to store.
+Delete files live under data/ too, so leaving them out of the subtraction
+would count the delete files a merge-on-read table is still reading as
+stranded bytes.
 """
 
 import lab
@@ -31,11 +35,13 @@ def stage(label, statements=()):
         "snapshots": st["snapshot_count"],
         "referenced_data_files": st["file_count"],
         "referenced_bytes": st["bytes"],
+        "referenced_delete_bytes": st["delete_bytes"],
         "delete_files": st["delete_file_count"],
         "disk_objects": disk["objects"],
         "disk_data_bytes": disk["data_bytes"],
         "disk_bytes": disk["bytes"],
-        "unreferenced_bytes": disk["data_bytes"] - st["bytes"],
+        "unreferenced_bytes": (disk["data_bytes"] - st["bytes"]
+                               - st["delete_bytes"]),
     }
     print(f"  {label:24} snaps={row['snapshots']:>2} "
           f"ref={row['referenced_bytes']:>12,} "

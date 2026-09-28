@@ -1,7 +1,8 @@
-"""Shared plumbing for the three experiments: talk to Trino and to MinIO.
+"""Shared plumbing for the four experiments: talk to Trino and to MinIO.
 
 Everything here is a measurement helper. The experiments themselves live in
-exp1_operation_cost.py, exp2_partition_planning.py and exp3_snapshot_reclaim.py.
+exp1_operation_cost.py, exp2_partition_planning.py, exp3_snapshot_reclaim.py
+and exp4_delete_cost.py.
 """
 
 import json
@@ -195,6 +196,10 @@ def objects(prefix="local/warehouse"):
         ["docker", "exec", MINIO, "mc", "ls", "--recursive", "--json", prefix],
         capture_output=True, text=True,
     )
+    # A failed listing prints nothing, and an empty dict would read as a
+    # table holding zero bytes.
+    if proc.returncode != 0:
+        raise QueryError(f"mc ls failed ({proc.returncode}): {proc.stderr}")
     found = {}
     for line in proc.stdout.splitlines():
         if not line.startswith("{"):
@@ -292,7 +297,7 @@ def table_disk(name):
 
 
 def verdict(rec):
-    """Three outcomes, not two.
+    """Four outcomes, not two.
 
     metadata-only  no data file and no delete file changed identity
     merge-on-read  delete files appeared; no data file was removed

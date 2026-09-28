@@ -7,8 +7,9 @@ with Trino 478, MinIO and an Iceberg REST catalog in Docker Compose on one
 machine. No cloud account, no managed service, and no corpus to download: the
 data is generated from a sequence in SQL, so a clone reproduces it exactly.
 
-A personal learning project. Each claim names a test, and every figure is read
-from a shipped results file rather than from the prose.
+A personal learning project. Each claim names a test, and every figure is derived
+from a shipped results file or the SQL that generates the data, apart from the few
+the figures checker names.
 
 Four measurements, four questions:
 
@@ -52,7 +53,7 @@ Two of the eight predictions were wrong, and they are still in the code. Both
 `DELETE` and `UPDATE` were predicted to rewrite data. Under merge-on-read they
 write delete files and leave every original data file exactly where it was.
 `scripts/exp1_operation_cost.py` keeps the refuted predictions rather than
-quietly correcting them, and a test asserts that those two are recorded as
+silently correcting them, and a test asserts that those two are recorded as
 refuted, so a later tidy-up cannot erase the only surprise in the table.
 
 "Verdict" above is narrower than the `rewrote_data` flag `SAMPLE_RUN.md`
@@ -119,10 +120,10 @@ correlation buys looks exactly like a real finding.
 
 A table is taken through append, update, delete and compaction, then cleaned
 up. Three numbers are tracked, and they are not the same number: bytes the
-current snapshot references, data bytes actually in object storage, and total
-bytes including metadata.
+current snapshot references, bytes under `data/` in object storage (data and
+delete files), and total bytes including metadata.
 
-| Stage | Snapshots | Referenced | On disk | Total incl. metadata | Stranded |
+| Stage | Snapshots | Referenced | On disk | Total incl. metadata | On disk, not referenced data |
 | --- | --- | --- | --- | --- | --- |
 | created | 1 | 185.9 MB | 185.9 MB | 186.0 MB | 0 |
 | appended | 2 | 278.8 MB | 278.8 MB | 279.1 MB | 0 |
@@ -131,6 +132,14 @@ bytes including metadata.
 | **optimized** | 5 | 192.9 MB | **576.6 MB** | 577.1 MB | **383.7 MB** |
 | after `expire_snapshots` | 1 | 192.9 MB | **576.6 MB** | 576.8 MB | **383.7 MB** |
 | after `remove_orphan_files` | 1 | 192.9 MB | 192.9 MB | 193.1 MB | 0 |
+
+The last column is on-disk bytes under `data/` minus referenced data bytes.
+Delete files live under `data/` too, so at the updated and deleted stages it
+is not history: the referenced data files only grew, from 9 to 10, and the
+current snapshot carries 9 and then 18 position-delete files that it still
+reads. The recorded run did not separate their bytes; the script now does,
+and a re-run reports them apart. From compaction on, every byte in that column
+is unreferenced.
 
 `expire_snapshots` took the snapshot count from 5 to 1 and reclaimed zero data
 bytes. Not a rounding-error amount: the data figure is identical to the byte,
@@ -224,8 +233,8 @@ Two things worth noticing, because both cut against intuition:
   delete files and at thirty-five, because it counts the data scan and not the
   delete files merged on top. The one metric you would reach for to measure
   merge-on-read read cost is blind to it. At the last stage the delete files
-  were 1,157,927 bytes against a reported 1,420,000 byte scan, 82% of the read,
-  invisible.
+  were 1,157,927 bytes against a reported 1,420,000 byte scan, equal to 82% of
+  the reported scan, and invisible in it.
 
 ## Claims backed by tests
 
@@ -274,7 +283,7 @@ needs Docker.
 | The read cost appears at the first delete and then plateaus | `tests/test_results_invariants.py::TestDeleteCost::test_the_cost_appears_at_the_first_delete_and_then_plateaus` |
 | `optimize` clears the delete files and returns the read to baseline | `tests/test_results_invariants.py::TestDeleteCost::test_optimize_returns_the_read_to_baseline` (mutation-checked: leave delete files behind and it fails) |
 | Every test this table cites exists, and every section it points at exists | `tests/test_results_invariants.py::TestTheClaimsTableIsHonest::test_every_test_the_readme_cites_exists`, `::TestTheClaimsTableIsHonest::test_every_section_the_readme_points_at_exists`, `::TestTheClaimsTableIsHonest::test_the_citation_parser_still_finds_the_whole_table` (the last one fails if the parser stops finding the table, so a clean pass cannot come from an empty set) |
-| Every number in this README and in `GITHUB_DESCRIPTION.txt` is derived from `results/*.json`, prose as well as tables | `tests/test_results_invariants.py::TestReadmeAgreesWithResults::test_every_shipped_number_is_derived_from_the_results` (mutation-checked: change one figure in either document and it fails) |
+| The figures `scripts/check_readme_numbers.py` lists, in this README and in `GITHUB_DESCRIPTION.txt`, tables and prose, are derived from `results/*.json` and `sql/generate.sql`; its docstring names the few it does not derive | `tests/test_results_invariants.py::TestReadmeAgreesWithResults::test_every_shipped_number_is_derived_from_the_results` (mutation-checked: change one figure in either document and it fails) |
 
 ## Running it
 
@@ -303,13 +312,13 @@ PYTHONPATH=scripts ./envs/bin/python scripts/exp4_delete_cost.py
 
 `SAMPLE_RUN.md` is the captured output of exactly those commands.
 
-The stack binds every port to loopback and picks unusual ones (Trino on 8090,
-MinIO on 9000/9001, the catalog on 8181) so it does not collide with anything
-already running. The MinIO credentials in `stack/compose.yaml` are fixtures,
-not secrets: MinIO needs a root user to start and the whole thing is bound to
-127.0.0.1.
+The stack binds every port to loopback: MinIO on 9000/9001 and the catalog on
+8181, their images' defaults, and Trino on 8090 instead of its default 8080.
+The MinIO credentials in `stack/compose.yaml`, repeated for Trino in
+`stack/trino/catalog/iceberg.properties`, are fixtures, not secrets: MinIO
+needs a root user to start and the whole thing is bound to 127.0.0.1.
 
-## What this does not measure
+## Limits
 
 - **One engine.** Every number is Trino 478. Spark, Flink and Dremio implement
   the same Iceberg spec with different defaults. Experiment 4 shows that on
@@ -338,7 +347,7 @@ not secrets: MinIO needs a root user to start and the whole thing is bound to
   records a measurement.
 - **The recorded run did not isolate the ALTER in experiment 2.**
   `evolved_partition_change.alter_isolated` is `false`: that run took two
-  states, before the CREATE and after the ALTER and the INSERT together, so
+  states, after the CREATE and after the ALTER and the INSERT together, so
   it could not have observed the ALTER rewriting files on its own. What it
   does show is that the evolved table holds every original file under the
   original spec id, which is the same fact from the other end, and it is
@@ -355,9 +364,9 @@ survives a restart: where exactly-once stops being true, what an old savepoint
 does to a table, and what the two maintenance procedures in section 3 here,
 `expire_snapshots` and `remove_orphan_files`, do to a job that is still writing.
 
-Both follow the same rules: no claim without a test, mutation checks on the
-tests that matter, every number re-derived from the shipped results by script,
-and predictions recorded before the run so the refuted ones survive.
+Both follow the same rules: every claim has a test, the tests that matter are
+mutation-checked, figures are re-derived from the shipped results by script,
+and predictions are recorded before the run so the refuted ones survive.
 
 ## License
 

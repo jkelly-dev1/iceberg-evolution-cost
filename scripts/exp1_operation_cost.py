@@ -60,7 +60,18 @@ def run_one(name, template, expectation):
     record = {"operation": name, "naive_prediction": expectation,
               "sql": template.format(t="<table>")}
     try:
-        _, ms = lab.timed_sql(template.format(t=lab.table(tmp)))
+        # Only the operation itself is inside the try. A failure to MEASURE
+        # (a state or a disk listing) is not a finding about Trino and must
+        # not be recorded as "unsupported"; it raises.
+        try:
+            _, ms = lab.timed_sql(template.format(t=lab.table(tmp)))
+        except lab.QueryError as exc:
+            # An unsupported operation is recorded as a result. Trino's
+            # Iceberg connector does not implement every Iceberg spec
+            # operation, and which ones it declines is part of the answer.
+            record["supported"] = False
+            record["error"] = str(exc).splitlines()[-1][:200]
+            return record
         record["supported"] = True
         record["duration_ms"] = ms
         after = lab.state(tmp)
@@ -68,7 +79,7 @@ def run_one(name, template, expectation):
         record["verdict"] = verdict(record)
         # A prediction of "rewrites data" is REFUTED by a merge-on-read
         # verdict. Collapsing the three verdicts to a metadata-only/other
-        # boolean scored that as a hit, which quietly turned the most
+        # boolean scored that as a hit, which silently turned the most
         # interesting result in this table into a passing row.
         expected_verdict = ("metadata-only" if expectation == "metadata-only"
                             else "rewrite")
@@ -76,12 +87,6 @@ def run_one(name, template, expectation):
         record["prediction_held"] = record["verdict"] == expected_verdict
         record["disk_bytes_before"] = disk_before["bytes"]
         record["disk_bytes_after"] = lab.disk()["bytes"]
-    except lab.QueryError as exc:
-        # An unsupported operation is recorded as a result. Trino's Iceberg
-        # connector does not implement every Iceberg spec operation, and which
-        # ones it declines is part of the answer.
-        record["supported"] = False
-        record["error"] = str(exc).splitlines()[-1][:200]
     finally:
         lab.sql(f"DROP TABLE IF EXISTS {lab.table(tmp)}")
     return record

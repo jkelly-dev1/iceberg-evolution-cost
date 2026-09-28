@@ -13,9 +13,14 @@ reordered, shortened or edited; the only thing removed is the leading
 paragraphs are this document's own commentary and were never printed by
 anything.
 
-Those `results/*.json` files committed alongside this repository are the output
-of exactly this run, and `scripts/check_readme_numbers.py` re-derives every
-number in `README.md` and `GITHUB_DESCRIPTION.txt` from them.
+The `results/*.json` files committed alongside this repository are the output
+of this run with two keys changed by hand afterwards, both to record what the
+run did NOT do: `source_table.measured_from` (`null`) was added to experiment
+1, and in experiment 2 `evolved_partition_change.alter_isolated` (`false`)
+replaced `alter_rewrote_data`. The experiment 1 script of that run wrote the
+source-table figures as a literal; README says so under Limits.
+`scripts/check_readme_numbers.py` re-derives the figures it lists in
+`README.md` and `GITHUB_DESCRIPTION.txt` from these files.
 
 The test-suite block at the end is re-captured whenever the suite changes, and
 it is the one block here that is not from the 2026-08 run: the experiments need
@@ -104,6 +109,12 @@ $ PYTHONPATH=scripts ./envs/bin/python scripts/exp3_snapshot_reclaim.py
 wrote results/exp3_snapshot_reclaim.json
 ```
 
+The `stranded=` figures at `03_updated` and `04_deleted` are not history. This
+run's script subtracted only referenced DATA bytes, and position-delete files
+that the current snapshot still reads sit under `data/` too, so those two
+figures are live delete files. Today's script subtracts them; README labels
+the column for what this run measured.
+
 ## Experiment 4: what a delete really costs
 
 Captured 2026-08-21. Its data file count is 7 here where an earlier run of the
@@ -129,8 +140,8 @@ wrote results/exp4_delete_cost.json
 
 ```
 $ ./envs/bin/pytest -q
-70 passed in 0.03s
+76 passed in 0.06s
 $ python3 scripts/check_readme_numbers.py
 
-58 of 58 derived figures found verbatim across 2 document(s) (38 table rows, 18 in README prose, 2 in GITHUB_DESCRIPTION.txt)
+74 of 74 derived figures found verbatim across 2 document(s) (38 table rows, 34 in README prose, 2 in GITHUB_DESCRIPTION.txt)
 ```

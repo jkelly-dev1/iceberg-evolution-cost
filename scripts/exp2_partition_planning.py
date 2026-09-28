@@ -69,6 +69,17 @@ def build_evolved():
     return t, before, after_alter, after
 
 
+def alter_isolated(before, after_alter, after):
+    """Whether the middle state really sits before the INSERT, asked of the
+    states' contents. A spec change adds no snapshot (exp1 records
+    set_partitioning at 1 -> 1) and the INSERT adds one, so an isolated middle
+    state has the first state's snapshot count and fewer than the last.
+    Object identity would be true of any two lab.state() calls, wherever they
+    were taken."""
+    return (before["snapshot_count"] == after_alter["snapshot_count"]
+            < after["snapshot_count"])
+
+
 def spec_mix(name):
     """How many data files sit under each partition spec id."""
     rows = lab.sql(f"SELECT spec_id, count(*) AS files, "
@@ -110,10 +121,8 @@ def main():
                      "costs to hold files under two specs at once"),
         "day_predicate": DAY,
         "evolved_partition_change": {
-            # Whether a distinct middle state exists, asked of the states
-            # themselves. A run that hands the same state back twice reports
-            # false here, and the ALTER figures below are then not evidence.
-            "alter_isolated": evo_after_alter is not evo_after,
+            "alter_isolated": alter_isolated(evo_before, evo_after_alter,
+                                             evo_after),
             "files_before_alter": evo_before["file_count"],
             "files_after_alter": evo_after_alter["file_count"],
             "files_after_alter_and_insert": evo_after["file_count"],

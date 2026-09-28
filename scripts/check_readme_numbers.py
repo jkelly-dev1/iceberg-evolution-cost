@@ -1,15 +1,24 @@
-"""Re-derive every number in README.md from results/*.json and diff them.
+"""Re-derive README.md's figures from results/*.json and diff them.
 
 A README is prose and drifts; results/*.json is evidence and does not. This
 script rebuilds each table row from the JSON and asserts the exact string is
 present in the README, so a re-run that changes a byte figure fails loudly
-instead of leaving the document quietly wrong.
+instead of leaving the document silently wrong.
+
+The two generator moduli come from sql/generate.sql, the SQL the data is
+built from. What it does not derive: Trino's version (478), the stack's port numbers and
+127.0.0.1 (stack/compose.yaml holds them), the "roughly 600 ms" of process
+launch (an observation, not a recorded figure), "about 30 days" of a month
+partition, and 1024 in the claims row, which names a unit. `--emit` prints
+every row it checks, so the coverage can be measured.
 
 Run it from the repository root:  python3 scripts/check_readme_numbers.py
+                                  python3 scripts/check_readme_numbers.py --emit
 """
 
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -121,10 +130,16 @@ def expected_rows():
                 mb(st["referenced_bytes"]), disk, mb(st["disk_bytes"]),
                 stranded]
 
+    # The last column is on-disk data/ bytes minus what the current snapshot
+    # references. A run that recorded referenced delete bytes subtracts them
+    # too and the column is then history alone; the shipped run did not, so
+    # its column also holds live delete files and is labeled for that.
+    legacy = any("referenced_delete_bytes" not in st for st in e3["stages"])
     rows += block(
         "exp3",
         ["Stage", "Snapshots", "Referenced", "On disk",
-         "Total incl. metadata", "Stranded"],
+         "Total incl. metadata",
+         "On disk, not referenced data" if legacy else "Unreferenced"],
         [("exp3:" + st["stage"], exp3_cells(st)) for st in e3["stages"]])
 
     oob = e4["write_mode"]["out_of_band"]
@@ -164,6 +179,29 @@ def expected_rows():
            f"{st['queries']['selective']['duration_ms_median']:.0f} ms"])
          for st in e4["read_amplification"]["stages"]])
     return rows
+
+
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+         "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+         "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+         "eighty", "ninety"]
+
+
+def words(n):
+    """A count below 100 as README spells it: 35 -> "thirty-five"."""
+    if not 0 <= n < 100:
+        raise ValueError(f"{n} is outside what the README spells out")
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
+def last_live(stages):
+    """Live rows after optimize, the one stage that records them again."""
+    (after,) = [st for st in stages if st['stage'].endswith('optimize')]
+    return after['live_rows']
 
 
 def prose_facts():
@@ -228,7 +266,63 @@ def prose_facts():
     a_delete = next(o for o in e1["operations"]
                     if o["operation"] == "delete_matching_rows")
 
-    return [
+    ops = e1["operations"]
+    refuted = sum(1 for o in ops if o.get("prediction_held") is False)
+    source_rows = e1["source_table"]["rows"]
+    month_region = (e2["layouts"]["month"]["queries"]
+                    ["non_partition_column"]["scan_rows"])
+    retention = re.search(r"\((\d+)\.00d\)", e3["default_expire_error"])
+    runs = {len(q["duration_ms_samples"]) for st in stages
+            for q in st["queries"].values()}
+    if len(runs) != 1:
+        raise SystemExit(f"exp4 stages ran different repeat counts: {runs}")
+    (runs,) = runs
+    first_deleted = stages[1]
+    # The generator's moduli, read from the SQL that builds the data: the
+    # README explains the region-under-day result by them.
+    sql = open(os.path.join(ROOT, "sql", "generate.sql"), encoding="utf-8").read()
+    day_mod = int(re.search(r"\(\(id % (\d+)\) \* INTERVAL '1' DAY\)", sql).group(1))
+    region_mod = int(re.search(r"CAST\(\(id % (\d+)\) \+ 1 AS INTEGER\)\)\s+AS region", sql).group(1))
+    day_splits = (e2['layouts']['day']['queries']['non_partition_column']
+                  ['splits'])
+    # Each delete's share of the table: what optimize removed, over the
+    # number of delete stages, over the baseline's live rows.
+    deletes = [st for st in stages if st['stage'][3:].startswith('after_delete')]
+    per_delete = round(100 * (stages[0]['live_rows'] - last_live(stages))
+                       / len(deletes) / stages[0]['live_rows'])
+    by_stage = {st["stage"]: st for st in e3["stages"]}
+    extra = []
+    if any("referenced_delete_bytes" not in st for st in e3["stages"]):
+        extra = [("prose:gap_is_live_delete_files",
+                  f"the referenced data files only grew, from "
+                  f"{by_stage['02_appended']['referenced_data_files']} to "
+                  f"{by_stage['03_updated']['referenced_data_files']}, and the "
+                  f"current snapshot carries "
+                  f"{by_stage['03_updated']['delete_files']} and then "
+                  f"{by_stage['04_deleted']['delete_files']} position-delete "
+                  f"files")]
+    return extra + [
+        ("prose:refuted_predictions",
+         f"{words(refuted).capitalize()} of the {words(len(ops))} predictions "
+         f"were wrong"),
+        ("prose:intro_rows", f"measured on {source_rows:,} rows"),
+        ("prose:region_under_month",
+         f"scans all {month_region:,} rows, exactly as the unpartitioned "
+         f"table does"),
+        ("prose:expire_minimum",
+         f"Trino enforces a {retention.group(1)} day minimum"),
+        ("prose:exp4_setup",
+         f"with {stages[0]['data_files']} data files. Timings are the MEDIAN "
+         f"OF {runs} RUNS"),
+        ("prose:exp4_repeats", f"Across {runs} repeats per stage"),
+        ("prose:optimize_cleared",
+         f"`optimize` cleared all {last['delete_files']} delete files"),
+        ("prose:not_proportional",
+         f"Going from {first_deleted['delete_files']} delete files to "
+         f"{last['delete_files']} did not"),
+        ("prose:physical_input_words",
+         f"at zero delete files and at "
+         f"{words(last['delete_files'])}"),
         ("prose:headline_expire",
          f"`expire_snapshots` reclaimed {zero_data}"),
         ("prose:expire_snapshot_count",
@@ -268,7 +362,21 @@ def prose_facts():
          f"{e2['layouts']['day']['queries']['non_partition_column']['scan_rows']:,} "
          f"rows from "
          f"{e2['layouts']['day']['queries']['non_partition_column']['splits']} "
-         f"of the 90 day partitions"),
+         f"of the {day_mod} day partitions"),
+        ("prose:generator_moduli",
+         f"`event_date` is `id % {day_mod}` and `region` is `id % {region_mod}`"),
+        ("prose:moduli_in_words",
+         f"{words(region_mod).capitalize()} divides {words(day_mod)}"),
+        ("prose:region_prunes_to_days",
+         f"prunes to the {day_splits} days that carry it"),
+        ("prose:per_delete_share",
+         f"{words(len(deletes)).capitalize()} successive deletes, each removing "
+         f"about {per_delete}% of the table"),
+        ("prose:claims_physical_input",
+         f"reports the same bytes at 0 and at {last['delete_files']} delete "
+         f"files"),
+        ("prose:scale_named_again",
+         f"the {round(e1['source_table']['bytes'] / 1e6)} MB above"),
         ("prose:delete_files",
          f"{last['data_files']} data files throughout, "
          f"{last['delete_files']} delete files at the end"),
@@ -282,7 +390,7 @@ def prose_facts():
          f"the selective query {sel_without} ms against {sel_with} ms"),
         ("prose:invisible_share",
          f"were {last['delete_bytes']:,} bytes against a reported {scan:,} "
-         f"byte scan, {share}% of the read"),
+         f"byte scan, equal to {share}% of the reported scan"),
     ]
 
 
@@ -317,6 +425,13 @@ DOCUMENTS = [
 
 
 def main():
+    if "--emit" in sys.argv:
+        # Every row this script checks, with the exact text it requires, so
+        # what it covers can be measured instead of assumed.
+        for name, build in DOCUMENTS:
+            for tag, row in build():
+                print(f"{name} {tag}\n{row}")
+        return 0
     total = missing_total = 0
     for name, build in DOCUMENTS:
         path = os.path.join(ROOT, name)

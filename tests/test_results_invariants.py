@@ -280,10 +280,30 @@ class TestSnapshotReclaim:
     def test_every_stage_is_internally_consistent(self, exp3):
         # stranded is a derived number; if it ever disagrees with its own
         # inputs the file is corrupt no matter how good the headline looks.
+        # Rows written before exp3 recorded referenced delete bytes carry no
+        # such key; for them the gap includes live delete files (see
+        # test_the_gap_before_compaction_is_live_delete_files).
         for s in exp3["stages"]:
             assert (s["unreferenced_bytes"]
-                    == s["disk_data_bytes"] - s["referenced_bytes"])
+                    == s["disk_data_bytes"] - s["referenced_bytes"]
+                    - s.get("referenced_delete_bytes", 0))
             assert s["disk_bytes"] >= s["disk_data_bytes"]
+
+    def test_the_gap_before_compaction_is_live_delete_files(self, exp3):
+        # In the shipped run, the gap at the update and delete stages is not
+        # history: the referenced data files only grew from the append, and
+        # the current snapshot carries delete files. README labels that
+        # column for what it is and says so; this pins the facts it states.
+        stages = {s["stage"]: s for s in exp3["stages"]}
+        appended = stages["02_appended"]
+        for name in ("03_updated", "04_deleted"):
+            s = stages[name]
+            assert "referenced_delete_bytes" not in s
+            assert s["delete_files"] > 0
+            assert s["unreferenced_bytes"] > 0
+            assert (s["referenced_data_files"]
+                    >= appended["referenced_data_files"])
+            assert s["referenced_bytes"] >= appended["referenced_bytes"]
 
     def test_the_live_data_is_never_touched(self, exp3):
         # Reclaiming space must not cost rows. Referenced bytes are identical
@@ -402,20 +422,31 @@ class TestDeleteCost:
         assert min(dirty) > max(clean)
 
     def test_the_cost_appears_at_the_first_delete_and_then_plateaus(self, exp4):
-        # It is not proportional to delete file count at this scale. Going
-        # from 7 delete files to 35 does not multiply the cost by five, and
-        # the intuitive model says it should.
+        # It is not proportional to delete file count at this scale: five
+        # times the delete files does not multiply the cost by five, and the
+        # intuitive model says it should.
+        # "Appears in full, then flattens": everything after the first
+        # delete moves less than the first delete did, on both queries.
         stages = exp4["read_amplification"]["stages"]
-        first = stages[1]["queries"]["full_scan"]["duration_ms_median"]
-        fifth = stages[5]["queries"]["full_scan"]["duration_ms_median"]
-        assert fifth < first * 2
+        for query in ("full_scan", "selective"):
+            med = [st["queries"][query]["duration_ms_median"]
+                   for st in stages[:6]]
+            step = med[1] - med[0]
+            assert step > 0
+            assert max(abs(m - med[1]) for m in med[2:]) < step, query
 
     def test_optimize_returns_the_read_to_baseline(self, exp4):
         stages = exp4["read_amplification"]["stages"]
-        base = stages[0]["queries"]["full_scan"]["duration_ms_median"]
-        after = stages[6]["queries"]["full_scan"]["duration_ms_median"]
         assert stages[6]["delete_files"] == 0
-        assert after < base * 1.2
+        # Both queries, as README says: back inside the range of the clean
+        # baseline runs, below every run with delete files present.
+        for query in ("full_scan", "selective"):
+            base = stages[0]["queries"][query]["duration_ms_median"]
+            after = stages[6]["queries"][query]["duration_ms_median"]
+            dirty = [ms for st in stages[1:6]
+                     for ms in st["queries"][query]["duration_ms_samples"]]
+            assert after < base * 1.2, query
+            assert after < min(dirty), query
 
 
 class TestReadmeAgreesWithResults:
@@ -423,7 +454,7 @@ class TestReadmeAgreesWithResults:
         # The documents are prose and drift; results/*.json is evidence and
         # does not. This rebuilds each figure from the JSON and requires the
         # exact string in the document, so a re-run that shifts a byte figure
-        # fails here instead of leaving it quietly wrong.
+        # fails here instead of leaving it silently wrong.
         #
         # Prose is covered as well as table rows. A percentage inside a
         # sentence does not look like a figure the way a table row does, so it
@@ -441,6 +472,13 @@ class TestReadmeAgreesWithResults:
         # Count what ran, not only what passed: a version of the deriver that
         # silently stopped producing half its figures would otherwise be clean.
         assert len(chk.prose_facts()) >= 15
+        # The figures a README sentence repeats or explains are rows of their
+        # own; the floor above would not notice one of them going.
+        tags = {tag for tag, _ in chk.prose_facts()}
+        assert {"prose:generator_moduli", "prose:moduli_in_words",
+                "prose:region_prunes_to_days", "prose:per_delete_share",
+                "prose:claims_physical_input",
+                "prose:scale_named_again"} <= tags, tags
         assert len(chk.description_facts()) >= 2
         assert [n for n, _ in chk.DOCUMENTS] == ["README.md",
                                                  "GITHUB_DESCRIPTION.txt"]

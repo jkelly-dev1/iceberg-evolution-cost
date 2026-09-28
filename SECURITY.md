@@ -27,7 +27,8 @@ backports.
 These are self-contained demo projects, not production services. Provider
 credentials are supplied by the operator at runtime and are never committed to
 the repository. The one exception in this repository is deliberate and is not a
-secret: `stack/compose.yaml` sets a fixed MinIO root user and password, because
+secret: `stack/compose.yaml` sets a fixed MinIO root user and password, and
+`stack/trino/catalog/iceberg.properties` gives Trino the same pair, because
 MinIO requires a root user to start and the whole stack is bound to loopback on
 a single machine. Do not reuse that pair anywhere reachable. Limitations that
 the README documents as deliberate, out-of-scope seams are noted but may not be

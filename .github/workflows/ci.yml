@@ -16,13 +16,13 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
 
-      # The suite is deliberately offline. Reproducing the measurements needs
+      # The suite is offline. Reproducing the measurements needs
       # Docker, MinIO and a 2.4 GB Trino image; asserting them does not. The
       # tests cover the measurement logic as pure functions and the shipped
       # results/*.json as evidence, so CI stays fast and never depends on a
@@ -34,8 +34,8 @@ jobs:
 
       - run: python -m pytest -q
 
-      # Every number in the README is re-derived from results/*.json and must
-      # appear verbatim. A re-run that shifts a byte figure fails here rather
-      # than leaving the document quietly wrong.
+      # The figures the checker lists are re-derived from results/*.json and
+      # must appear verbatim. A re-run that shifts a byte figure fails here rather
+      # than leaving the document silently wrong.
       - name: README numbers match the shipped results
         run: python scripts/check_readme_numbers.py

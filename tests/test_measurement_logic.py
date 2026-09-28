@@ -226,12 +226,16 @@ class TestTheEvolvedBuildIsolatesTheAlter:
             calls.append(("sql", " ".join(statement.split())))
             return []
 
+        self.states = []
+
         def fake_state(name):
             calls.append(("state", name))
-            return {"file_count": len(calls), "delete_file_count": 0,
-                    "data_files": {}, "delete_files": {}, "files": {},
-                    "bytes": 0, "delete_bytes": 0, "rows": 0,
-                    "snapshot_count": 1, "snapshot_ids": [1]}
+            st = {"file_count": len(calls), "delete_file_count": 0,
+                  "data_files": {}, "delete_files": {}, "files": {},
+                  "bytes": 0, "delete_bytes": 0, "rows": 0,
+                  "snapshot_count": 1, "snapshot_ids": [1]}
+            self.states.append(st)
+            return st
 
         monkeypatch.setattr(lab, "sql", fake_sql)
         monkeypatch.setattr(lab, "state", fake_state)
@@ -262,8 +266,13 @@ class TestTheEvolvedBuildIsolatesTheAlter:
         _, returned = self._trace(monkeypatch)
         assert len(returned) == 4
         _, before, after_alter, after = returned
-        assert before is not after_alter is not after
-        assert after_alter is not after
+        # Each by the order it was TAKEN: three distinct objects handed back
+        # in the wrong order would pass a distinctness check, and main()
+        # would then measure the ALTER across the INSERT.
+        first, middle, last = self.states
+        assert before is first
+        assert after_alter is middle
+        assert after is last
 
     def test_the_alter_really_does_precede_the_insert(self, monkeypatch):
         # The ordering the experiment's whole story rests on: the spec is
@@ -280,3 +289,75 @@ class TestTheEvolvedBuildIsolatesTheAlter:
         assert create < alter < insert
         assert "month(event_date)" in statements[create]
         assert "day(event_date)" in statements[alter]
+
+
+class TestAlterIsolation:
+    """exp2 records whether the middle state really preceded the INSERT."""
+
+    def test_the_flag_reads_the_states_not_their_identity(self):
+        import exp2_partition_planning as exp2
+        st = lambda n: {"snapshot_count": n}
+        assert exp2.alter_isolated(st(1), st(1), st(2))
+        # A middle state taken after the INSERT has the INSERT's snapshot.
+        assert not exp2.alter_isolated(st(1), st(2), st(2))
+
+
+class TestAMeasurementFailureIsNotAnUnsupportedOperation:
+    def test_a_failed_state_after_the_operation_raises(self, monkeypatch):
+        import pytest
+        import exp1_operation_cost as exp1
+        taken = []
+
+        def fake_state(name):
+            taken.append(name)
+            if len(taken) == 2:
+                raise lab.QueryError("files table unreadable")
+            return {"file_count": 1}
+        monkeypatch.setattr(lab, "sql", lambda *a, **k: [])
+        monkeypatch.setattr(lab, "timed_sql", lambda *a, **k: ([], 10.0))
+        monkeypatch.setattr(lab, "state", fake_state)
+        monkeypatch.setattr(lab, "disk", lambda: {"bytes": 0, "objects": 0})
+        with pytest.raises(lab.QueryError, match="files table unreadable"):
+            exp1.run_one("add_column", "ALTER TABLE {t} ADD COLUMN x int",
+                         "metadata-only")
+
+    def test_a_refused_operation_is_still_recorded_as_unsupported(
+            self, monkeypatch):
+        import exp1_operation_cost as exp1
+
+        def refuse(*a, **k):
+            raise lab.QueryError("line 1\nThis connector does not support it")
+        monkeypatch.setattr(lab, "sql", lambda *a, **k: [])
+        monkeypatch.setattr(lab, "timed_sql", refuse)
+        monkeypatch.setattr(lab, "state", lambda name: {"file_count": 1})
+        monkeypatch.setattr(lab, "disk", lambda: {"bytes": 0, "objects": 0})
+        rec = exp1.run_one("x", "ALTER TABLE {t} X", "metadata-only")
+        assert rec["supported"] is False
+        assert rec["error"] == "This connector does not support it"
+
+
+class TestStrandedBytesExcludeLiveDeleteFiles:
+    def test_referenced_delete_bytes_are_not_counted_as_stranded(
+            self, monkeypatch):
+        import exp3_snapshot_reclaim as exp3
+        monkeypatch.setattr(lab, "sql", lambda *a, **k: [])
+        monkeypatch.setattr(lab, "state", lambda name: {
+            "snapshot_count": 3, "file_count": 10, "bytes": 1000,
+            "delete_file_count": 9, "delete_bytes": 40})
+        monkeypatch.setattr(lab, "table_disk", lambda name: {
+            "objects": 30, "data_bytes": 1040, "bytes": 1100})
+        row = exp3.stage("03_updated")
+        assert row["referenced_delete_bytes"] == 40
+        assert row["unreferenced_bytes"] == 0
+
+
+class TestAFailedListingIsNotAnEmptyTable:
+    def test_mc_ls_failure_raises(self, monkeypatch):
+        import pytest
+        import subprocess
+
+        class Done:
+            returncode, stdout, stderr = 1, "", "connection refused"
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+        with pytest.raises(lab.QueryError, match="mc ls failed"):
+            lab.objects()
